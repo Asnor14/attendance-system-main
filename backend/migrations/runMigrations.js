@@ -4,6 +4,7 @@ import * as migration002 from './002_create_students.js';
 import * as migration003 from './003_create_schedules.js';
 import * as migration004 from './004_create_devices.js';
 import * as migration005 from './005_create_pending_registrations.js';
+import * as migration006 from './006_create_attendance_logs.js';
 
 const migrations = [
   { name: '001_create_admins', ...migration001 },
@@ -11,11 +12,11 @@ const migrations = [
   { name: '003_create_schedules', ...migration003 },
   { name: '004_create_devices', ...migration004 },
   { name: '005_create_pending_registrations', ...migration005 },
+  { name: '006_create_attendance_logs', ...migration006 },
 ];
 
 const runMigrations = async () => {
   try {
-    // Create migrations tracking table
     await new Promise((resolve, reject) => {
       getDb().run(`
         CREATE TABLE IF NOT EXISTS migrations (
@@ -66,4 +67,3 @@ const runMigrations = async () => {
 };
 
 runMigrations();
-

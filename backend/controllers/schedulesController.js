@@ -44,6 +44,52 @@ export const getAllSchedules = async (req, res, next) => {
   } catch (error) { next(error); }
 };
 
+// NEW: Get Logs for a specific Schedule ID and Date
+export const getScheduleLogs = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { date } = req.query; // Expect format YYYY-MM-DD
+
+    // 1. Get the subject code for this schedule
+    const { data: schedule, error: schedError } = await supabase
+      .from('schedules')
+      .select('subject_code')
+      .eq('id', id)
+      .single();
+
+    if (schedError || !schedule) return res.status(404).json({ error: 'Schedule not found' });
+
+    // 2. Fetch logs matching subject_code AND specific date
+    let query = supabase
+      .from('attendance_logs')
+      .select('*')
+      .eq('subject_code', schedule.subject_code)
+      .order('timestamp', { ascending: false });
+
+    if (date) {
+      query = query.eq('date', date);
+    }
+
+    const { data: logs, error: logError } = await query;
+
+    if (logError) throw logError;
+
+    // 3. Enrich with student names
+    const { data: students } = await supabase.from('students').select('student_id, full_name');
+    
+    const enrichedLogs = logs.map(log => {
+      const student = students.find(s => s.student_id === log.student_id);
+      return {
+        ...log,
+        student_name: student ? student.full_name : 'Unknown Student'
+      };
+    });
+
+    res.json(enrichedLogs);
+
+  } catch (error) { next(error); }
+};
+
 // Sync for Kiosk
 export const syncSchedules = async (req, res, next) => {
   try {

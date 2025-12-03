@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard';
 import Devices from './pages/Devices';
 import DeviceDetails from './pages/DeviceDetails';
 import Schedules from './pages/Schedules';
+import ScheduleDetails from './pages/ScheduleDetails'; // Import new page
 import Students from './pages/Students';
 import Pending from './pages/Pending';
 import RFIDViewer from './pages/RFIDViewer';
@@ -34,6 +35,7 @@ function App() {
             <Route path="devices" element={<Devices />} />
             <Route path="devices/:id" element={<DeviceDetails />} />
             <Route path="schedules" element={<Schedules />} />
+            <Route path="schedules/:id" element={<ScheduleDetails />} /> {/* New Route */}
             <Route path="students" element={<Students />} />
             <Route path="pending" element={<Pending />} />
             <Route path="rfid" element={<RFIDViewer />} />

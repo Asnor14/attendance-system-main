@@ -3,7 +3,10 @@ import api from './axios';
 export const schedulesAPI = {
   getAll: () => api.get('/schedules').then(res => res.data),
   
-  // 👇 These are the missing functions causing your error
+  // New functions
+  getById: (id) => api.get(`/schedules/${id}`).then(res => res.data),
+  getLogs: (id, date) => api.get(`/schedules/${id}/logs?date=${date}`).then(res => res.data),
+
   getByKiosk: (kioskId) => api.get(`/schedules/kiosk/${kioskId}`).then(res => res.data),
   assignToKiosk: (scheduleId, kioskId) => api.post('/schedules/assign', { scheduleId, kioskId }).then(res => res.data),
   

@@ -1,7 +1,8 @@
 import express from 'express';
 import { 
   getAllSchedules, createSchedule, updateSchedule, deleteSchedule, 
-  syncSchedules, getSchedulesByKiosk, assignScheduleToKiosk 
+  syncSchedules, getSchedulesByKiosk, assignScheduleToKiosk,
+  getScheduleLogs 
 } from '../controllers/schedulesController.js';
 import { authenticateToken } from '../middleware/auth.js';
 
@@ -11,8 +12,9 @@ router.get('/sync', syncSchedules);
 
 router.use(authenticateToken);
 router.get('/', getAllSchedules);
-router.get('/kiosk/:kioskId', getSchedulesByKiosk); // Get Kiosk Schedules
-router.post('/assign', assignScheduleToKiosk); // Assign
+router.get('/:id/logs', getScheduleLogs); // New Logs Route
+router.get('/kiosk/:kioskId', getSchedulesByKiosk);
+router.post('/assign', assignScheduleToKiosk);
 router.post('/', createSchedule);
 router.put('/:id', updateSchedule);
 router.delete('/:id', deleteSchedule);
