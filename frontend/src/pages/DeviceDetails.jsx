@@ -3,11 +3,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import Swal from 'sweetalert2';
 import { motion } from 'framer-motion';
 import { devicesAPI } from '../api/devices';
+import { schedulesAPI } from '../api/schedules'; // Import schedules API
 import { supabase } from '../supabaseClient';
 import { 
   MdArrowBack, MdDeviceHub, MdWifi, MdMeetingRoom, MdVpnKey, 
   MdCameraAlt, MdVideocamOff, MdNfc, MdHistory, MdRefresh, 
-  MdSignalWifi4Bar, MdSignalWifiOff 
+  MdSignalWifi4Bar, MdSignalWifiOff, MdSchedule, MdAdd, MdClass, MdArrowForward
 } from 'react-icons/md';
 
 const DeviceDetails = () => {
@@ -16,12 +17,21 @@ const DeviceDetails = () => {
   
   const [device, setDevice] = useState(null);
   const [logs, setLogs] = useState([]);
+  const [kioskSchedules, setKioskSchedules] = useState([]); // State for assigned schedules
+  
+  // Loading States
   const [loading, setLoading] = useState(true);
   const [logsLoading, setLogsLoading] = useState(true);
+  
+  // Modal State
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [availableSchedules, setAvailableSchedules] = useState([]);
+  const [selectedScheduleId, setSelectedScheduleId] = useState('');
 
   useEffect(() => {
     fetchDeviceDetails();
     fetchDeviceLogs();
+    fetchKioskSchedules(); // Fetch schedules on mount
 
     // --- REALTIME LISTENER FOR THIS DEVICE ---
     const channel = supabase
@@ -29,7 +39,6 @@ const DeviceDetails = () => {
       .on('postgres_changes', 
         { event: 'UPDATE', schema: 'public', table: 'devices', filter: `id=eq.${id}` }, 
         (payload) => {
-          console.log("Realtime Update:", payload.new);
           setDevice(prev => ({ ...prev, ...payload.new }));
         }
       )
@@ -73,6 +82,45 @@ const DeviceDetails = () => {
       console.error(error);
     } finally {
       setLogsLoading(false);
+    }
+  };
+
+  // --- NEW: Fetch Assigned Schedules ---
+  const fetchKioskSchedules = async () => {
+    try {
+      const data = await schedulesAPI.getByKiosk(id);
+      setKioskSchedules(data || []);
+    } catch (error) {
+      console.error("Failed to fetch kiosk schedules", error);
+    }
+  };
+
+  // --- NEW: Handle Opening Assign Modal ---
+  const handleOpenAssignModal = async () => {
+    try {
+      const all = await schedulesAPI.getAll();
+      // Filter out schedules already assigned to THIS kiosk
+      const unassigned = all.filter(s => s.kiosk_id !== parseInt(id));
+      setAvailableSchedules(unassigned);
+      setShowAssignModal(true);
+    } catch (error) {
+      Swal.fire('Error', 'Could not load schedules', 'error');
+    }
+  };
+
+  // --- NEW: Handle Assign Submit ---
+  const handleAssignSubmit = async (e) => {
+    e.preventDefault();
+    if (!selectedScheduleId) return;
+
+    try {
+      await schedulesAPI.assignToKiosk(selectedScheduleId, id);
+      Swal.fire({ icon: 'success', title: 'Assigned', timer: 1500, showConfirmButton: false });
+      setShowAssignModal(false);
+      setSelectedScheduleId('');
+      fetchKioskSchedules(); // Refresh list
+    } catch (error) {
+      Swal.fire('Error', 'Failed to assign schedule', 'error');
     }
   };
 
@@ -217,11 +265,68 @@ const DeviceDetails = () => {
           </div>
         </div>
 
-        {/* RIGHT COLUMN: ACTIVITY LOGS */}
-        <div className="lg:col-span-2">
-          <div className="bg-white rounded-2xl shadow-sm border border-brand-beige overflow-hidden flex flex-col h-[600px]">
+        {/* RIGHT COLUMN */}
+        <div className="lg:col-span-2 space-y-6">
+          
+          {/* 3. ASSIGNED SCHEDULES CARD (NEW) */}
+          <div className="bg-white rounded-2xl shadow-sm border border-brand-beige overflow-hidden">
             <div className="p-6 border-b border-brand-beige flex justify-between items-center">
-              <h2 className="font-bold text-lg text-brand-dark">Recent Activity Logs</h2>
+              <h2 className="font-bold text-lg text-brand-dark flex items-center gap-2">
+                <MdClass className="text-brand-orange" /> Assigned Schedules
+              </h2>
+              <button 
+                onClick={handleOpenAssignModal}
+                className="flex items-center gap-1 bg-brand-orange text-white px-3 py-1.5 rounded-lg text-sm font-bold shadow-md hover:bg-brand-orange/90 transition-colors"
+              >
+                <MdAdd size={18} /> Add Subject
+              </button>
+            </div>
+            
+            <div className="p-4">
+              {kioskSchedules.length === 0 ? (
+                <div className="text-center py-8 text-brand-charcoal/50">
+                  <MdSchedule className="text-4xl mx-auto mb-2 opacity-30" />
+                  <p>No subjects assigned to this kiosk yet.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {kioskSchedules.map(schedule => (
+                    <motion.div 
+                      key={schedule.id}
+                      whileHover={{ scale: 1.02 }}
+                      onClick={() => navigate(`/schedules/${schedule.id}`)}
+                      className="bg-brand-beige/20 border border-brand-orange/10 p-4 rounded-xl cursor-pointer hover:border-brand-orange/40 hover:bg-brand-beige/40 transition-all group"
+                    >
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <span className="text-xs font-bold bg-brand-charcoal text-white px-2 py-0.5 rounded uppercase tracking-wide">
+                            {schedule.subject_code}
+                          </span>
+                          <h4 className="font-bold text-brand-dark mt-2 group-hover:text-brand-orange transition-colors">
+                            {schedule.subject_name}
+                          </h4>
+                          <p className="text-xs text-brand-charcoal/70 mt-1 flex items-center gap-1">
+                            <MdSchedule /> {schedule.time_start} - {schedule.time_end}
+                          </p>
+                          <p className="text-xs text-brand-charcoal/50 mt-1 truncate">
+                            {schedule.days}
+                          </p>
+                        </div>
+                        <MdArrowForward className="text-brand-orange/0 group-hover:text-brand-orange transition-all -translate-x-2 group-hover:translate-x-0" />
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 4. ACTIVITY LOGS CARD */}
+          <div className="bg-white rounded-2xl shadow-sm border border-brand-beige overflow-hidden flex flex-col h-[400px]">
+            <div className="p-6 border-b border-brand-beige flex justify-between items-center">
+              <h2 className="font-bold text-lg text-brand-dark flex items-center gap-2">
+                <MdHistory className="text-brand-orange" /> Recent Activity
+              </h2>
               <button onClick={fetchDeviceLogs} className="p-2 hover:bg-gray-100 rounded-lg text-brand-charcoal transition-colors">
                 <MdRefresh size={20} className={logsLoading ? "animate-spin" : ""} />
               </button>
@@ -235,7 +340,6 @@ const DeviceDetails = () => {
                  </div>
               ) : logs.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-gray-400 p-8">
-                  <MdHistory size={48} className="mb-2 opacity-20"/>
                   <p>No activity recorded yet.</p>
                 </div>
               ) : (
@@ -252,7 +356,7 @@ const DeviceDetails = () => {
                     {logs.map((log) => (
                       <tr key={log.id} className="hover:bg-gray-50 transition-colors">
                         <td className="px-6 py-3 font-mono text-xs text-gray-500">
-                          {new Date(log.created_at).toLocaleString()}
+                          {new Date(log.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                         </td>
                         <td className="px-6 py-3 font-semibold text-brand-dark">
                           {log.student_name}
@@ -279,6 +383,50 @@ const DeviceDetails = () => {
           </div>
         </div>
       </div>
+
+      {/* ASSIGN SCHEDULE MODAL */}
+      {showAssignModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl">
+            <h2 className="text-xl font-bold text-brand-dark mb-4">Assign Subject</h2>
+            <p className="text-sm text-gray-500 mb-4">Select a class to assign to <strong>{device.device_name}</strong>.</p>
+            
+            <form onSubmit={handleAssignSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Available Classes</label>
+                <select 
+                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-brand-orange outline-none bg-white"
+                  value={selectedScheduleId}
+                  onChange={(e) => setSelectedScheduleId(e.target.value)}
+                  required
+                >
+                  <option value="">-- Select a Subject --</option>
+                  {availableSchedules.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.subject_code} - {s.subject_name} ({s.time_start}-{s.time_end})
+                    </option>
+                  ))}
+                </select>
+                {availableSchedules.length === 0 && (
+                  <p className="text-xs text-red-500 mt-2">No unassigned schedules available. Create one in Schedules page first.</p>
+                )}
+              </div>
+              
+              <div className="flex gap-3 pt-4">
+                <button type="button" onClick={() => setShowAssignModal(false)} className="flex-1 py-3 bg-brand-beige text-brand-charcoal rounded-xl">Cancel</button>
+                <button 
+                  type="submit" 
+                  disabled={!selectedScheduleId}
+                  className="flex-1 py-3 bg-brand-orange text-white rounded-xl font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Assign
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
     </motion.div>
   );
 };
