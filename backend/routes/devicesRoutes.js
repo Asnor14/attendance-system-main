@@ -1,30 +1,20 @@
 import express from 'express';
-import { 
-  getAllDevices, 
-  getDeviceById, 
-  createDevice,       // 👈 Ensure imported
-  deleteDevice,
-  getDeviceLogs,
-  deviceHeartbeat,
-  registerDevice,
-  updateDeviceConfig  // 👈 Ensure imported
-} from '../controllers/devicesController.js';
-import { authenticateToken } from '../middleware/auth.js';
+import * as devicesController from '../controllers/devicesController.js'; // Ensure this path is correct
+import { verifyToken, isAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// 1. Public Routes (Kiosk communication)
-router.post('/:id/heartbeat', deviceHeartbeat);
-router.post('/register', registerDevice);
+// Public (Heartbeat from Kiosk)
+router.post('/:id/heartbeat', devicesController.deviceHeartbeat);
 
-// 2. Protected Routes (Admin Panel)
-router.use(authenticateToken);
+// Admin / Protected Routes
+router.get('/', verifyToken, devicesController.getAllDevices);
+router.post('/', verifyToken, isAdmin, devicesController.createDevice);
+router.get('/:id', verifyToken, devicesController.getDeviceById);
+router.delete('/:id', verifyToken, isAdmin, devicesController.deleteDevice);
+router.get('/:id/logs', verifyToken, devicesController.getDeviceLogs);
 
-router.get('/', getAllDevices);
-router.post('/', createDevice); // 👈 Manual Create Route
-router.get('/:id', getDeviceById);
-router.delete('/:id', deleteDevice);
-router.put('/:id/config', updateDeviceConfig); // 👈 Toggle Config
-router.get('/:id/logs', getDeviceLogs);
+// IMPORTANT: This is the line that allows changing the Camera/RFID
+router.put('/:id', verifyToken, devicesController.updateDeviceConfig); 
 
 export default router;

@@ -3,11 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import Swal from 'sweetalert2';
 import { motion } from 'framer-motion';
 import { devicesAPI } from '../api/devices';
+import { supabase } from '../supabaseClient';
 import { useAuth } from '../context/AuthContext';
 import { 
   MdAdd, MdDeviceHub, MdWifi, MdRefresh, MdDelete, 
-  MdPersonAdd, MdSignalWifi4Bar, MdSignalWifiOff, MdMeetingRoom, MdVpnKey,
-  MdCameraAlt, MdNfc
+  MdSignalWifi4Bar, MdSignalWifiOff, MdMeetingRoom, MdVpnKey,
+  MdCameraAlt, MdVideocamOff
 } from 'react-icons/md';
 
 const Devices = () => {
@@ -18,7 +19,6 @@ const Devices = () => {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   
-  // Form State
   const [formData, setFormData] = useState({
     device_name: '',
     room: 'ER101',
@@ -32,8 +32,28 @@ const Devices = () => {
 
   useEffect(() => {
     fetchDevices();
-    const interval = setInterval(fetchDevices, 10000); 
-    return () => clearInterval(interval);
+
+    // --- REALTIME LISTENER ---
+    // This updates the UI instantly when the Kiosk sends a heartbeat
+    const channel = supabase
+      .channel('devices_realtime')
+      .on('postgres_changes', 
+        { event: '*', schema: 'public', table: 'devices' }, 
+        (payload) => {
+          if (payload.eventType === 'UPDATE') {
+            setDevices(prev => prev.map(d => d.id === payload.new.id ? { ...d, ...payload.new } : d));
+          } else if (payload.eventType === 'INSERT') {
+            setDevices(prev => [...prev, payload.new]);
+          } else if (payload.eventType === 'DELETE') {
+            setDevices(prev => prev.filter(d => d.id !== payload.old.id));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const fetchDevices = async () => {
@@ -59,33 +79,30 @@ const Devices = () => {
     setTimeout(() => setRefreshingId(null), 500);
   };
 
-  // NEW: Function to Toggle Camera/RFID Config
-  const handleToggleConfig = async (e, device, field) => {
+  // --- CAMERA TOGGLE FUNCTION ---
+  const handleToggleCamera = async (e, device) => {
     e.stopPropagation();
-    
-    // 1. Calculate new value
-    const newValue = !device[field];
+    const newValue = !device.camera_enabled;
 
-    // 2. Optimistic UI Update (Update screen immediately)
-    const updatedDevices = devices.map(d => 
-        d.id === device.id ? { ...d, [field]: newValue } : d
-    );
-    setDevices(updatedDevices);
+    // 1. Optimistic Update (Instant visual change)
+    setDevices(prev => prev.map(d => d.id === device.id ? { ...d, camera_enabled: newValue } : d));
 
     try {
-      // 3. Send to API (This saves to Supabase even if offline)
-      await devicesAPI.update(device.id, { [field]: newValue });
+      // 2. Send update to Backend
+      await devicesAPI.update(device.id, { camera_enabled: newValue });
       
       const Toast = Swal.mixin({
         toast: true, position: 'top-end', showConfirmButton: false, timer: 1500, timerProgressBar: true
       });
-      Toast.fire({ icon: 'success', title: `${field === 'camera_enabled' ? 'Camera' : 'RFID'} ${newValue ? 'Enabled' : 'Disabled'}` });
+      Toast.fire({ 
+        icon: 'success', 
+        title: `Camera ${newValue ? 'Enabled' : 'Disabled'}` 
+      });
 
     } catch (error) {
       console.error("Update failed", error);
-      // Revert UI if failed
-      fetchDevices();
-      Swal.fire('Error', 'Failed to update setting', 'error');
+      fetchDevices(); // Revert if failed
+      Swal.fire('Error', 'Could not update camera settings. Check if Kiosk is reachable or Database.', 'error');
     }
   };
 
@@ -93,15 +110,12 @@ const Devices = () => {
     e.preventDefault();
     try {
       await devicesAPI.create(formData);
-      fetchDevices();
       setShowModal(false);
       resetForm();
       Swal.fire({
         icon: 'success',
         title: 'Device Added',
-        text: 'Don\'t forget to copy the Connection Key to the RPi!',
-        background: '#FFE7D0',
-        color: '#1B1B1B',
+        text: 'Copy the Key: ' + formData.connection_key,
         confirmButtonColor: '#FC6E20'
       });
     } catch (error) {
@@ -113,10 +127,10 @@ const Devices = () => {
     e.stopPropagation();
     const result = await Swal.fire({
       title: 'Delete Device?',
-      text: "This cannot be undone!",
+      text: "This will unlink schedules and delete logs.",
       icon: 'warning',
       showCancelButton: true,
-      confirmButtonColor: '#FC6E20',
+      confirmButtonColor: '#d33',
       cancelButtonColor: '#323232',
       confirmButtonText: 'Yes, Delete'
     });
@@ -124,17 +138,11 @@ const Devices = () => {
     if(result.isConfirmed) {
       try {
         await devicesAPI.delete(id);
-        fetchDevices();
         Swal.fire('Deleted', 'Device removed', 'success');
       } catch (error) {
-        Swal.fire('Error', 'Cannot delete active device', 'error');
+        Swal.fire('Error', 'Delete failed', 'error');
       }
     }
-  };
-
-  const handleRegisterClick = (e, deviceId) => {
-    e.stopPropagation();
-    navigate('/students', { state: { targetDeviceId: deviceId } });
   };
 
   const resetForm = () => {
@@ -148,7 +156,7 @@ const Devices = () => {
       <div className="flex justify-between items-center mb-8 gap-4">
         <div>
           <h1 className="text-3xl font-bold text-brand-dark">Device Management</h1>
-          <p className="text-brand-charcoal/70 mt-1">Manage Kiosks and Scanners</p>
+          <p className="text-brand-charcoal/70 mt-1">Manage Kiosk Settings</p>
         </div>
         
         {isAdmin && (
@@ -177,6 +185,7 @@ const Devices = () => {
                 onClick={() => navigate(`/devices/${device.id}`)}
                 className={`group relative bg-white rounded-2xl p-6 border-2 transition-all cursor-pointer shadow-sm ${isOnline ? 'border-green-400 shadow-green-100' : 'border-transparent hover:border-brand-orange/30'}`}
               >
+                {/* Header */}
                 <div className="flex justify-between items-start mb-4">
                   <div className={`p-3 rounded-xl ${isOnline ? 'bg-green-100 text-green-600' : 'bg-brand-beige text-brand-charcoal'}`}>
                     {device.device_type === 'kiosk' ? <MdDeviceHub size={28} /> : <MdWifi size={28} />}
@@ -195,62 +204,48 @@ const Devices = () => {
                    <span>{device.room || 'Unassigned Room'}</span>
                 </div>
 
-                {/* --- NEW: CONFIG TOGGLES (Update DB even if Offline) --- */}
+                {/* --- CAMERA CONTROL ONLY --- */}
                 {isAdmin && (
-                  <div className="flex gap-2 mt-4 mb-2">
-                    {/* Camera Toggle */}
+                  <div className="mt-6 pt-4 border-t border-brand-beige">
                     <button
-                      onClick={(e) => handleToggleConfig(e, device, 'camera_enabled')}
-                      className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-bold border transition-all
+                      onClick={(e) => handleToggleCamera(e, device)}
+                      className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold transition-all
                         ${device.camera_enabled 
-                          ? 'bg-blue-50 border-blue-200 text-blue-600' 
-                          : 'bg-gray-50 border-gray-200 text-gray-400'}`}
+                          ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' 
+                          : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
                     >
-                      <MdCameraAlt size={16} /> {device.camera_enabled ? 'CAM ON' : 'CAM OFF'}
-                    </button>
-                    
-                    {/* RFID Toggle */}
-                    <button
-                      onClick={(e) => handleToggleConfig(e, device, 'rfid_enabled')}
-                      className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-bold border transition-all
-                        ${device.rfid_enabled 
-                          ? 'bg-purple-50 border-purple-200 text-purple-600' 
-                          : 'bg-gray-50 border-gray-200 text-gray-400'}`}
-                    >
-                      <MdNfc size={16} /> {device.rfid_enabled ? 'RFID ON' : 'RFID OFF'}
+                      {device.camera_enabled ? <MdCameraAlt size={18} /> : <MdVideocamOff size={18} />}
+                      {device.camera_enabled ? 'Camera Enabled' : 'Camera Disabled'}
                     </button>
                   </div>
                 )}
 
-                <div className="flex items-center justify-between mt-4 pt-4 border-t border-brand-beige">
+                {/* Bottom Actions */}
+                <div className="flex items-center justify-end mt-4">
                    <div className="flex gap-2">
                       <button 
                         onClick={(e) => handleRefresh(e, device.id)}
-                        className={`p-2 rounded-lg hover:bg-brand-beige ${refreshingId === device.id ? 'animate-spin text-brand-orange' : ''}`}
+                        className={`p-2 rounded-lg hover:bg-brand-beige text-brand-charcoal ${refreshingId === device.id ? 'animate-spin text-brand-orange' : ''}`}
                       >
                         <MdRefresh size={20} />
                       </button>
                       {isAdmin && (
-                        <button onClick={(e) => handleDelete(e, device.id)} className="p-2 rounded-lg hover:bg-brand-beige hover:text-red-600">
+                        <button onClick={(e) => handleDelete(e, device.id)} className="p-2 rounded-lg hover:bg-brand-beige text-brand-charcoal hover:text-red-600">
                             <MdDelete size={20} />
                         </button>
                       )}
                    </div>
-                   {isOnline && (
-                      <button onClick={(e) => handleRegisterClick(e, device.id)} className="flex items-center gap-1.5 px-3 py-1.5 bg-brand-orange/10 text-brand-orange rounded-lg text-xs font-bold hover:bg-brand-orange/20">
-                        <MdPersonAdd size={16} /> Register
-                      </button>
-                   )}
                 </div>
               </motion.div>
             );
           })}
         </div>
       )}
-      {/* Modal Code remains the same... */}
+
+      {/* Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl animate-in fade-in zoom-in duration-200">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl">
             <h2 className="text-xl font-bold mb-4 text-brand-dark">Add New Device</h2>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
@@ -259,19 +254,17 @@ const Devices = () => {
                   type="text"
                   value={formData.device_name}
                   onChange={(e) => setFormData({ ...formData, device_name: e.target.value })}
-                  className="w-full px-4 py-3 border border-brand-charcoal/20 rounded-lg focus:ring-2 focus:ring-brand-orange outline-none bg-white text-brand-dark"
-                  placeholder="e.g., Kiosk 1"
+                  className="w-full px-4 py-3 border border-brand-charcoal/20 rounded-lg focus:ring-2 focus:ring-brand-orange outline-none"
                   required
                 />
               </div>
-              
               <div className="grid grid-cols-2 gap-4">
                  <div>
                     <label className="block text-xs font-bold text-brand-charcoal/60 uppercase mb-1">Location</label>
                     <select
                       value={formData.room}
                       onChange={(e) => setFormData({ ...formData, room: e.target.value })}
-                      className="w-full px-4 py-3 border border-brand-charcoal/20 rounded-lg focus:ring-2 focus:ring-brand-orange outline-none bg-white text-brand-dark"
+                      className="w-full px-4 py-3 border border-brand-charcoal/20 rounded-lg focus:ring-2 focus:ring-brand-orange outline-none"
                     >
                       {['ER101', 'ER102', 'ER103', 'ER104', 'ER105', 'Gym', 'Library', 'Canteen'].map(r => <option key={r} value={r}>{r}</option>)}
                     </select>
@@ -281,7 +274,7 @@ const Devices = () => {
                     <select
                       value={formData.device_type}
                       onChange={(e) => setFormData({ ...formData, device_type: e.target.value })}
-                      className="w-full px-4 py-3 border border-brand-charcoal/20 rounded-lg focus:ring-2 focus:ring-brand-orange outline-none bg-white text-brand-dark"
+                      className="w-full px-4 py-3 border border-brand-charcoal/20 rounded-lg focus:ring-2 focus:ring-brand-orange outline-none"
                     >
                       <option value="kiosk">Kiosk</option>
                       <option value="esp">ESP Scanner</option>
@@ -289,42 +282,22 @@ const Devices = () => {
                  </div>
               </div>
               
-              {/* Connection Key Generator */}
               <div>
-                <label className="block text-xs font-bold text-brand-charcoal/60 uppercase mb-1">Connection Key (ID)</label>
+                <label className="block text-xs font-bold text-brand-charcoal/60 uppercase mb-1">Connection Key</label>
                 <div className="flex gap-2">
                   <input 
-                    className="w-full px-4 py-3 border border-brand-charcoal/20 rounded-lg font-mono bg-brand-beige/30 text-brand-dark focus:ring-2 focus:ring-brand-orange outline-none" 
+                    className="w-full px-4 py-3 border border-brand-charcoal/20 rounded-lg font-mono bg-brand-beige/30 focus:ring-2 focus:ring-brand-orange outline-none" 
                     placeholder="Generate Key" 
                     value={formData.connection_key} 
                     readOnly 
                   />
-                  <button 
-                    type="button" 
-                    onClick={generateKey} 
-                    className="p-3 bg-brand-orange text-white rounded-lg hover:bg-brand-orange/90 transition-colors shadow-md"
-                    title="Generate New Key"
-                  >
-                    <MdVpnKey size={20} />
-                  </button>
+                  <button type="button" onClick={generateKey} className="p-3 bg-brand-orange text-white rounded-lg hover:bg-brand-orange/90"><MdVpnKey size={20} /></button>
                 </div>
-                <p className="text-xs text-gray-400 mt-1">Copy this key to your Kiosk config file.</p>
               </div>
 
               <div className="flex gap-3 pt-4">
-                <button
-                  type="button"
-                  onClick={() => { setShowModal(false); resetForm(); }}
-                  className="flex-1 px-4 py-3 text-brand-charcoal bg-brand-beige hover:bg-brand-charcoal/10 rounded-lg font-medium transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 px-4 py-3 bg-brand-orange text-white hover:bg-brand-orange/90 rounded-lg font-bold transition-colors shadow-lg shadow-brand-orange/30"
-                >
-                  Save Device
-                </button>
+                <button type="button" onClick={() => { setShowModal(false); resetForm(); }} className="flex-1 px-4 py-3 text-brand-charcoal bg-brand-beige rounded-lg">Cancel</button>
+                <button type="submit" className="flex-1 px-4 py-3 bg-brand-orange text-white rounded-lg font-bold">Save Device</button>
               </div>
             </form>
           </div>
