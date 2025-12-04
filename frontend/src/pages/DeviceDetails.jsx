@@ -3,25 +3,24 @@ import { useParams, useNavigate } from 'react-router-dom';
 import Swal from 'sweetalert2';
 import { motion } from 'framer-motion';
 import { devicesAPI } from '../api/devices';
-import { schedulesAPI } from '../api/schedules'; // Import schedules API
-import { useAuth } from '../context/AuthContext'; // Import Auth Context
+import { schedulesAPI } from '../api/schedules'; // Import for Subject functionality
 import { supabase } from '../supabaseClient';
+import { useAuth } from '../context/AuthContext'; // Import Auth
 import { 
   MdArrowBack, MdDeviceHub, MdWifi, MdMeetingRoom, MdVpnKey, 
   MdCameraAlt, MdVideocamOff, MdNfc, MdHistory, MdRefresh, 
-  MdSignalWifi4Bar, MdSignalWifiOff, MdSchedule, MdAdd, MdClass, MdArrowForward
+  MdSignalWifi4Bar, MdSignalWifiOff, MdClass, MdAdd, MdSchedule, MdArrowForward
 } from 'react-icons/md';
 
 const DeviceDetails = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth(); // Get current user
+  const { user } = useAuth();
   
   const [device, setDevice] = useState(null);
   const [logs, setLogs] = useState([]);
-  const [kioskSchedules, setKioskSchedules] = useState([]); // Assigned schedules
+  const [kioskSchedules, setKioskSchedules] = useState([]); // For Subjects
   
-  // Loading States
   const [loading, setLoading] = useState(true);
   const [logsLoading, setLogsLoading] = useState(true);
   
@@ -33,22 +32,23 @@ const DeviceDetails = () => {
   useEffect(() => {
     fetchDeviceDetails();
     fetchDeviceLogs();
-    fetchKioskSchedules(); 
+    fetchKioskSchedules(); // Load subjects
 
-    // --- REALTIME LISTENER FOR THIS DEVICE ---
-    const channel = supabase
-      .channel(`device-${id}`)
+    // --- REALTIME LISTENER: DEVICE STATUS ---
+    const deviceChannel = supabase
+      .channel(`device-detail-${id}`)
       .on('postgres_changes', 
         { event: 'UPDATE', schema: 'public', table: 'devices', filter: `id=eq.${id}` }, 
         (payload) => {
+          // Update local state immediately when Supabase changes
           setDevice(prev => ({ ...prev, ...payload.new }));
         }
       )
       .subscribe();
 
-    // --- REALTIME LISTENER FOR NEW LOGS ---
-    const logChannel = supabase
-      .channel(`logs-${id}`)
+    // --- REALTIME LISTENER: LOGS ---
+    const logsChannel = supabase
+      .channel(`device-logs-${id}`)
       .on('postgres_changes', 
         { event: 'INSERT', schema: 'public', table: 'attendance_logs', filter: `kiosk_id=eq.${id}` },
         (payload) => {
@@ -58,8 +58,8 @@ const DeviceDetails = () => {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
-      supabase.removeChannel(logChannel);
+      supabase.removeChannel(deviceChannel);
+      supabase.removeChannel(logsChannel);
     };
   }, [id]);
 
@@ -87,7 +87,7 @@ const DeviceDetails = () => {
     }
   };
 
-  // --- FETCH ASSIGNED SCHEDULES ---
+  // --- SCHEDULES FUNCTIONS ---
   const fetchKioskSchedules = async () => {
     try {
       const data = await schedulesAPI.getByKiosk(id);
@@ -97,17 +97,36 @@ const DeviceDetails = () => {
     }
   };
 
-  // --- HANDLE SCHEDULE CLICK (ACCESS CONTROL) ---
+  const handleOpenAssignModal = async () => {
+    try {
+      const all = await schedulesAPI.getAll();
+      const unassigned = all.filter(s => s.kiosk_id !== parseInt(id));
+      setAvailableSchedules(unassigned);
+      setShowAssignModal(true);
+    } catch (error) {
+      Swal.fire('Error', 'Could not load schedules', 'error');
+    }
+  };
+
+  const handleAssignSubmit = async (e) => {
+    e.preventDefault();
+    if (!selectedScheduleId) return;
+    try {
+      await schedulesAPI.assignToKiosk(selectedScheduleId, id);
+      Swal.fire({ icon: 'success', title: 'Assigned', timer: 1500, showConfirmButton: false });
+      setShowAssignModal(false);
+      setSelectedScheduleId('');
+      fetchKioskSchedules();
+    } catch (error) {
+      Swal.fire('Error', 'Failed to assign schedule', 'error');
+    }
+  };
+
   const handleScheduleClick = (schedule) => {
-    // 1. If Admin, always allow
+    // Access Control Logic
     if (user?.role === 'admin') {
       navigate(`/schedules/${schedule.id}`);
-      return;
-    }
-
-    // 2. If Teacher, check ownership
-    if (user?.role === 'teacher') {
-      // Ensure we compare compatible types (e.g. both strings or both numbers)
+    } else if (user?.role === 'teacher') {
       // eslint-disable-next-line eqeqeq
       if (schedule.teacher_id == user.id) {
         navigate(`/schedules/${schedule.id}`);
@@ -124,48 +143,26 @@ const DeviceDetails = () => {
     }
   };
 
-  // --- HANDLE MODAL OPEN ---
-  const handleOpenAssignModal = async () => {
-    try {
-      const all = await schedulesAPI.getAll();
-      // Filter out schedules already assigned to THIS kiosk to prevent duplicates in dropdown
-      const unassigned = all.filter(s => s.kiosk_id !== parseInt(id));
-      setAvailableSchedules(unassigned);
-      setShowAssignModal(true);
-    } catch (error) {
-      Swal.fire('Error', 'Could not load schedules', 'error');
-    }
-  };
-
-  // --- HANDLE ASSIGN SUBMIT ---
-  const handleAssignSubmit = async (e) => {
-    e.preventDefault();
-    if (!selectedScheduleId) return;
-
-    try {
-      await schedulesAPI.assignToKiosk(selectedScheduleId, id);
-      Swal.fire({ icon: 'success', title: 'Assigned', timer: 1500, showConfirmButton: false });
-      setShowAssignModal(false);
-      setSelectedScheduleId('');
-      fetchKioskSchedules(); // Refresh list
-    } catch (error) {
-      Swal.fire('Error', 'Failed to assign schedule', 'error');
-    }
-  };
-
+  // --- CONFIG TOGGLE ---
   const handleToggleConfig = async (field, label) => {
     if (!device) return;
     const newValue = !device[field];
+
+    // Optimistic Update (Updates UI instantly)
     setDevice(prev => ({ ...prev, [field]: newValue }));
 
     try {
+      // Calls the FIXED api.put('/devices/:id/config')
       await devicesAPI.update(id, { [field]: newValue });
+      
       const Toast = Swal.mixin({
         toast: true, position: 'top-end', showConfirmButton: false, timer: 1500, timerProgressBar: true
       });
       Toast.fire({ icon: 'success', title: `${label} ${newValue ? 'Enabled' : 'Disabled'}` });
+
     } catch (error) {
-      fetchDeviceDetails(); 
+      console.error(error);
+      fetchDeviceDetails(); // Revert if failed
       Swal.fire('Error', 'Failed to update setting', 'error');
     }
   };
@@ -197,39 +194,90 @@ const DeviceDetails = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* LEFT COLUMN: INFO & CONFIG */}
+        {/* LEFT COLUMN */}
         <div className="lg:col-span-1 space-y-6">
+          
+          {/* INFO CARD */}
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-brand-beige">
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-bold text-lg text-brand-dark flex items-center gap-2"><MdDeviceHub className="text-brand-orange"/> Info</h2>
               {isOnline ? <MdSignalWifi4Bar className="text-green-500" title="Connected" /> : <MdSignalWifiOff className="text-gray-400" title="Disconnected" />}
             </div>
+            
             <div className="space-y-4">
               <div className="flex items-center gap-3 p-3 bg-brand-beige/30 rounded-xl">
                 <div className="p-2 bg-white rounded-lg text-brand-orange"><MdMeetingRoom /></div>
-                <div><p className="text-xs text-gray-500 uppercase font-bold">Location</p><p className="font-semibold text-brand-dark">{device.room}</p></div>
+                <div>
+                  <p className="text-xs text-gray-500 uppercase font-bold">Location</p>
+                  <p className="font-semibold text-brand-dark">{device.room}</p>
+                </div>
               </div>
+              
               <div className="flex items-center gap-3 p-3 bg-brand-beige/30 rounded-xl">
                 <div className="p-2 bg-white rounded-lg text-brand-orange"><MdVpnKey /></div>
-                <div className="overflow-hidden w-full"><p className="text-xs text-gray-500 uppercase font-bold">Key</p><p className="font-mono text-sm truncate text-brand-dark bg-white px-2 py-1 rounded border border-gray-200 mt-1 select-all">{device.connection_key}</p></div>
+                <div className="overflow-hidden w-full">
+                  <p className="text-xs text-gray-500 uppercase font-bold">Connection Key</p>
+                  <p className="font-mono text-sm truncate text-brand-dark bg-white px-2 py-1 rounded border border-gray-200 mt-1 select-all">
+                    {device.connection_key}
+                  </p>
+                </div>
               </div>
+
               <div className="flex items-center gap-3 p-3 bg-brand-beige/30 rounded-xl">
                 <div className="p-2 bg-white rounded-lg text-brand-orange"><MdHistory /></div>
-                <div><p className="text-xs text-gray-500 uppercase font-bold">Last Sync</p><p className="text-sm font-medium text-brand-dark">{device.last_sync ? new Date(device.last_sync).toLocaleString() : 'Never'}</p></div>
+                <div>
+                  <p className="text-xs text-gray-500 uppercase font-bold">Last Sync</p>
+                  <p className="text-sm font-medium text-brand-dark">
+                    {device.last_sync ? new Date(device.last_sync).toLocaleString() : 'Never'}
+                  </p>
+                </div>
               </div>
             </div>
           </div>
 
+          {/* CONFIG CARD */}
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-brand-beige">
             <h2 className="font-bold text-lg text-brand-dark mb-4">Configuration</h2>
+            
             <div className="space-y-3">
-              <button onClick={() => handleToggleConfig('camera_enabled', 'Camera')} className={`w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all ${device.camera_enabled ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 bg-gray-50 text-gray-500'}`}>
-                <div className="flex items-center gap-3">{device.camera_enabled ? <MdCameraAlt size={24}/> : <MdVideocamOff size={24}/>}<div className="text-left"><p className="font-bold text-sm">Camera</p><p className="text-xs opacity-80">{device.camera_enabled ? 'Active' : 'Disabled'}</p></div></div>
-                <div className={`w-10 h-5 rounded-full relative transition-colors ${device.camera_enabled ? 'bg-blue-500' : 'bg-gray-300'}`}><div className={`w-3 h-3 bg-white rounded-full absolute top-1 transition-all ${device.camera_enabled ? 'left-6' : 'left-1'}`}></div></div>
+              <button
+                onClick={() => handleToggleConfig('camera_enabled', 'Camera')}
+                className={`w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all duration-200 ${
+                  device.camera_enabled 
+                    ? 'border-blue-500 bg-blue-50 text-blue-700' 
+                    : 'border-gray-200 bg-gray-50 text-gray-500'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  {device.camera_enabled ? <MdCameraAlt size={24}/> : <MdVideocamOff size={24}/>}
+                  <div className="text-left">
+                    <p className="font-bold text-sm">Camera</p>
+                    <p className="text-xs opacity-80">{device.camera_enabled ? 'Active' : 'Disabled'}</p>
+                  </div>
+                </div>
+                <div className={`w-10 h-5 rounded-full relative transition-colors ${device.camera_enabled ? 'bg-blue-500' : 'bg-gray-300'}`}>
+                  <div className={`w-3 h-3 bg-white rounded-full absolute top-1 transition-all ${device.camera_enabled ? 'left-6' : 'left-1'}`}></div>
+                </div>
               </button>
-              <button onClick={() => handleToggleConfig('rfid_enabled', 'RFID Reader')} className={`w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all ${device.rfid_enabled ? 'border-purple-500 bg-purple-50 text-purple-700' : 'border-gray-200 bg-gray-50 text-gray-500'}`}>
-                <div className="flex items-center gap-3"><MdNfc size={24} /><div className="text-left"><p className="font-bold text-sm">RFID</p><p className="text-xs opacity-80">{device.rfid_enabled ? 'Active' : 'Disabled'}</p></div></div>
-                <div className={`w-10 h-5 rounded-full relative transition-colors ${device.rfid_enabled ? 'bg-purple-500' : 'bg-gray-300'}`}><div className={`w-3 h-3 bg-white rounded-full absolute top-1 transition-all ${device.rfid_enabled ? 'left-6' : 'left-1'}`}></div></div>
+
+              <button
+                onClick={() => handleToggleConfig('rfid_enabled', 'RFID Reader')}
+                className={`w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all duration-200 ${
+                  device.rfid_enabled 
+                    ? 'border-purple-500 bg-purple-50 text-purple-700' 
+                    : 'border-gray-200 bg-gray-50 text-gray-500'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <MdNfc size={24} />
+                  <div className="text-left">
+                    <p className="font-bold text-sm">RFID</p>
+                    <p className="text-xs opacity-80">{device.rfid_enabled ? 'Active' : 'Disabled'}</p>
+                  </div>
+                </div>
+                <div className={`w-10 h-5 rounded-full relative transition-colors ${device.rfid_enabled ? 'bg-purple-500' : 'bg-gray-300'}`}>
+                  <div className={`w-3 h-3 bg-white rounded-full absolute top-1 transition-all ${device.rfid_enabled ? 'left-6' : 'left-1'}`}></div>
+                </div>
               </button>
             </div>
           </div>
@@ -238,13 +286,12 @@ const DeviceDetails = () => {
         {/* RIGHT COLUMN */}
         <div className="lg:col-span-2 space-y-6">
           
-          {/* ASSIGNED SCHEDULES */}
+          {/* ASSIGNED SCHEDULES (ADDED BACK) */}
           <div className="bg-white rounded-2xl shadow-sm border border-brand-beige overflow-hidden">
             <div className="p-6 border-b border-brand-beige flex justify-between items-center">
               <h2 className="font-bold text-lg text-brand-dark flex items-center gap-2">
                 <MdClass className="text-brand-orange" /> Assigned Schedules
               </h2>
-              {/* Only show Add button if user is Admin, or allow teachers to add if that's desired */}
               <button 
                 onClick={handleOpenAssignModal}
                 className="flex items-center gap-1 bg-brand-orange text-white px-3 py-1.5 rounded-lg text-sm font-bold shadow-md hover:bg-brand-orange/90 transition-colors"
@@ -266,7 +313,7 @@ const DeviceDetails = () => {
                       key={schedule.id}
                       whileHover={{ scale: 1.02 }}
                       onClick={() => handleScheduleClick(schedule)}
-                      className={`bg-brand-beige/20 border border-brand-orange/10 p-4 rounded-xl cursor-pointer hover:border-brand-orange/40 hover:bg-brand-beige/40 transition-all group relative`}
+                      className="bg-brand-beige/20 border border-brand-orange/10 p-4 rounded-xl cursor-pointer hover:border-brand-orange/40 hover:bg-brand-beige/40 transition-all group relative"
                     >
                       <div className="flex justify-between items-start">
                         <div>
