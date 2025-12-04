@@ -1,9 +1,9 @@
 import express from 'express';
 import { getAllAdmins, createAdmin, updateAdmin, deleteAdmin } from '../controllers/adminsController.js';
-import { verifyToken } from '../middleware/auth.js';
+import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
-router.use(verifyToken);
+router.use(authenticateToken);
 
 router.get('/', getAllAdmins);
 router.post('/', createAdmin);
