@@ -4,6 +4,7 @@ import Swal from 'sweetalert2';
 import { motion } from 'framer-motion';
 import { devicesAPI } from '../api/devices';
 import { schedulesAPI } from '../api/schedules'; // Import schedules API
+import { useAuth } from '../context/AuthContext'; // Import Auth Context
 import { supabase } from '../supabaseClient';
 import { 
   MdArrowBack, MdDeviceHub, MdWifi, MdMeetingRoom, MdVpnKey, 
@@ -14,10 +15,11 @@ import {
 const DeviceDetails = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth(); // Get current user
   
   const [device, setDevice] = useState(null);
   const [logs, setLogs] = useState([]);
-  const [kioskSchedules, setKioskSchedules] = useState([]); // State for assigned schedules
+  const [kioskSchedules, setKioskSchedules] = useState([]); // Assigned schedules
   
   // Loading States
   const [loading, setLoading] = useState(true);
@@ -31,7 +33,7 @@ const DeviceDetails = () => {
   useEffect(() => {
     fetchDeviceDetails();
     fetchDeviceLogs();
-    fetchKioskSchedules(); // Fetch schedules on mount
+    fetchKioskSchedules(); 
 
     // --- REALTIME LISTENER FOR THIS DEVICE ---
     const channel = supabase
@@ -85,7 +87,7 @@ const DeviceDetails = () => {
     }
   };
 
-  // --- NEW: Fetch Assigned Schedules ---
+  // --- FETCH ASSIGNED SCHEDULES ---
   const fetchKioskSchedules = async () => {
     try {
       const data = await schedulesAPI.getByKiosk(id);
@@ -95,11 +97,38 @@ const DeviceDetails = () => {
     }
   };
 
-  // --- NEW: Handle Opening Assign Modal ---
+  // --- HANDLE SCHEDULE CLICK (ACCESS CONTROL) ---
+  const handleScheduleClick = (schedule) => {
+    // 1. If Admin, always allow
+    if (user?.role === 'admin') {
+      navigate(`/schedules/${schedule.id}`);
+      return;
+    }
+
+    // 2. If Teacher, check ownership
+    if (user?.role === 'teacher') {
+      // Ensure we compare compatible types (e.g. both strings or both numbers)
+      // eslint-disable-next-line eqeqeq
+      if (schedule.teacher_id == user.id) {
+        navigate(`/schedules/${schedule.id}`);
+      } else {
+        Swal.fire({
+          icon: 'error',
+          title: 'Access Denied',
+          text: 'You do not have access to this class schedule.',
+          confirmButtonColor: '#FC6E20',
+          background: '#FFE7D0',
+          color: '#1B1B1B'
+        });
+      }
+    }
+  };
+
+  // --- HANDLE MODAL OPEN ---
   const handleOpenAssignModal = async () => {
     try {
       const all = await schedulesAPI.getAll();
-      // Filter out schedules already assigned to THIS kiosk
+      // Filter out schedules already assigned to THIS kiosk to prevent duplicates in dropdown
       const unassigned = all.filter(s => s.kiosk_id !== parseInt(id));
       setAvailableSchedules(unassigned);
       setShowAssignModal(true);
@@ -108,7 +137,7 @@ const DeviceDetails = () => {
     }
   };
 
-  // --- NEW: Handle Assign Submit ---
+  // --- HANDLE ASSIGN SUBMIT ---
   const handleAssignSubmit = async (e) => {
     e.preventDefault();
     if (!selectedScheduleId) return;
@@ -124,25 +153,19 @@ const DeviceDetails = () => {
     }
   };
 
-  // --- TOGGLE HANDLERS ---
   const handleToggleConfig = async (field, label) => {
     if (!device) return;
     const newValue = !device[field];
-
-    // Optimistic Update
     setDevice(prev => ({ ...prev, [field]: newValue }));
 
     try {
       await devicesAPI.update(id, { [field]: newValue });
-      
       const Toast = Swal.mixin({
         toast: true, position: 'top-end', showConfirmButton: false, timer: 1500, timerProgressBar: true
       });
       Toast.fire({ icon: 'success', title: `${label} ${newValue ? 'Enabled' : 'Disabled'}` });
-
     } catch (error) {
-      console.error(error);
-      fetchDeviceDetails(); // Revert
+      fetchDeviceDetails(); 
       Swal.fire('Error', 'Failed to update setting', 'error');
     }
   };
@@ -155,7 +178,7 @@ const DeviceDetails = () => {
   return (
     <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="p-4 max-w-6xl mx-auto">
       
-      {/* HEADER & BACK BUTTON */}
+      {/* HEADER */}
       <div className="flex items-center gap-4 mb-8">
         <button onClick={() => navigate('/devices')} className="p-2 bg-white rounded-xl shadow-sm hover:bg-gray-50 text-brand-charcoal transition-colors">
           <MdArrowBack size={24} />
@@ -174,92 +197,39 @@ const DeviceDetails = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* LEFT COLUMN: INFO & SETTINGS */}
+        {/* LEFT COLUMN: INFO & CONFIG */}
         <div className="lg:col-span-1 space-y-6">
-          
-          {/* 1. DEVICE INFO CARD */}
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-brand-beige">
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-bold text-lg text-brand-dark flex items-center gap-2"><MdDeviceHub className="text-brand-orange"/> Info</h2>
               {isOnline ? <MdSignalWifi4Bar className="text-green-500" title="Connected" /> : <MdSignalWifiOff className="text-gray-400" title="Disconnected" />}
             </div>
-            
             <div className="space-y-4">
               <div className="flex items-center gap-3 p-3 bg-brand-beige/30 rounded-xl">
                 <div className="p-2 bg-white rounded-lg text-brand-orange"><MdMeetingRoom /></div>
-                <div>
-                  <p className="text-xs text-gray-500 uppercase font-bold">Location</p>
-                  <p className="font-semibold text-brand-dark">{device.room}</p>
-                </div>
+                <div><p className="text-xs text-gray-500 uppercase font-bold">Location</p><p className="font-semibold text-brand-dark">{device.room}</p></div>
               </div>
-              
               <div className="flex items-center gap-3 p-3 bg-brand-beige/30 rounded-xl">
                 <div className="p-2 bg-white rounded-lg text-brand-orange"><MdVpnKey /></div>
-                <div className="overflow-hidden w-full">
-                  <p className="text-xs text-gray-500 uppercase font-bold">Connection Key</p>
-                  <p className="font-mono text-sm truncate text-brand-dark bg-white px-2 py-1 rounded border border-gray-200 mt-1 select-all">
-                    {device.connection_key}
-                  </p>
-                </div>
+                <div className="overflow-hidden w-full"><p className="text-xs text-gray-500 uppercase font-bold">Key</p><p className="font-mono text-sm truncate text-brand-dark bg-white px-2 py-1 rounded border border-gray-200 mt-1 select-all">{device.connection_key}</p></div>
               </div>
-
               <div className="flex items-center gap-3 p-3 bg-brand-beige/30 rounded-xl">
                 <div className="p-2 bg-white rounded-lg text-brand-orange"><MdHistory /></div>
-                <div>
-                  <p className="text-xs text-gray-500 uppercase font-bold">Last Sync</p>
-                  <p className="text-sm font-medium text-brand-dark">
-                    {device.last_sync ? new Date(device.last_sync).toLocaleString() : 'Never'}
-                  </p>
-                </div>
+                <div><p className="text-xs text-gray-500 uppercase font-bold">Last Sync</p><p className="text-sm font-medium text-brand-dark">{device.last_sync ? new Date(device.last_sync).toLocaleString() : 'Never'}</p></div>
               </div>
             </div>
           </div>
 
-          {/* 2. SETTINGS CARD (TOGGLES) */}
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-brand-beige">
             <h2 className="font-bold text-lg text-brand-dark mb-4">Configuration</h2>
-            
             <div className="space-y-3">
-              {/* Camera Toggle */}
-              <button
-                onClick={() => handleToggleConfig('camera_enabled', 'Camera')}
-                className={`w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all duration-200 ${
-                  device.camera_enabled 
-                    ? 'border-blue-500 bg-blue-50 text-blue-700' 
-                    : 'border-gray-200 bg-gray-50 text-gray-500'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  {device.camera_enabled ? <MdCameraAlt size={24}/> : <MdVideocamOff size={24}/>}
-                  <div className="text-left">
-                    <p className="font-bold text-sm">Camera Detection</p>
-                    <p className="text-xs opacity-80">{device.camera_enabled ? 'Active' : 'Disabled'}</p>
-                  </div>
-                </div>
-                <div className={`w-10 h-5 rounded-full relative transition-colors ${device.camera_enabled ? 'bg-blue-500' : 'bg-gray-300'}`}>
-                  <div className={`w-3 h-3 bg-white rounded-full absolute top-1 transition-all ${device.camera_enabled ? 'left-6' : 'left-1'}`}></div>
-                </div>
+              <button onClick={() => handleToggleConfig('camera_enabled', 'Camera')} className={`w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all ${device.camera_enabled ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 bg-gray-50 text-gray-500'}`}>
+                <div className="flex items-center gap-3">{device.camera_enabled ? <MdCameraAlt size={24}/> : <MdVideocamOff size={24}/>}<div className="text-left"><p className="font-bold text-sm">Camera</p><p className="text-xs opacity-80">{device.camera_enabled ? 'Active' : 'Disabled'}</p></div></div>
+                <div className={`w-10 h-5 rounded-full relative transition-colors ${device.camera_enabled ? 'bg-blue-500' : 'bg-gray-300'}`}><div className={`w-3 h-3 bg-white rounded-full absolute top-1 transition-all ${device.camera_enabled ? 'left-6' : 'left-1'}`}></div></div>
               </button>
-
-              {/* RFID Toggle */}
-              <button
-                onClick={() => handleToggleConfig('rfid_enabled', 'RFID Reader')}
-                className={`w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all duration-200 ${
-                  device.rfid_enabled 
-                    ? 'border-purple-500 bg-purple-50 text-purple-700' 
-                    : 'border-gray-200 bg-gray-50 text-gray-500'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <MdNfc size={24} />
-                  <div className="text-left">
-                    <p className="font-bold text-sm">RFID Reader</p>
-                    <p className="text-xs opacity-80">{device.rfid_enabled ? 'Active' : 'Disabled'}</p>
-                  </div>
-                </div>
-                <div className={`w-10 h-5 rounded-full relative transition-colors ${device.rfid_enabled ? 'bg-purple-500' : 'bg-gray-300'}`}>
-                  <div className={`w-3 h-3 bg-white rounded-full absolute top-1 transition-all ${device.rfid_enabled ? 'left-6' : 'left-1'}`}></div>
-                </div>
+              <button onClick={() => handleToggleConfig('rfid_enabled', 'RFID Reader')} className={`w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all ${device.rfid_enabled ? 'border-purple-500 bg-purple-50 text-purple-700' : 'border-gray-200 bg-gray-50 text-gray-500'}`}>
+                <div className="flex items-center gap-3"><MdNfc size={24} /><div className="text-left"><p className="font-bold text-sm">RFID</p><p className="text-xs opacity-80">{device.rfid_enabled ? 'Active' : 'Disabled'}</p></div></div>
+                <div className={`w-10 h-5 rounded-full relative transition-colors ${device.rfid_enabled ? 'bg-purple-500' : 'bg-gray-300'}`}><div className={`w-3 h-3 bg-white rounded-full absolute top-1 transition-all ${device.rfid_enabled ? 'left-6' : 'left-1'}`}></div></div>
               </button>
             </div>
           </div>
@@ -268,12 +238,13 @@ const DeviceDetails = () => {
         {/* RIGHT COLUMN */}
         <div className="lg:col-span-2 space-y-6">
           
-          {/* 3. ASSIGNED SCHEDULES CARD (NEW) */}
+          {/* ASSIGNED SCHEDULES */}
           <div className="bg-white rounded-2xl shadow-sm border border-brand-beige overflow-hidden">
             <div className="p-6 border-b border-brand-beige flex justify-between items-center">
               <h2 className="font-bold text-lg text-brand-dark flex items-center gap-2">
                 <MdClass className="text-brand-orange" /> Assigned Schedules
               </h2>
+              {/* Only show Add button if user is Admin, or allow teachers to add if that's desired */}
               <button 
                 onClick={handleOpenAssignModal}
                 className="flex items-center gap-1 bg-brand-orange text-white px-3 py-1.5 rounded-lg text-sm font-bold shadow-md hover:bg-brand-orange/90 transition-colors"
@@ -294,8 +265,8 @@ const DeviceDetails = () => {
                     <motion.div 
                       key={schedule.id}
                       whileHover={{ scale: 1.02 }}
-                      onClick={() => navigate(`/schedules/${schedule.id}`)}
-                      className="bg-brand-beige/20 border border-brand-orange/10 p-4 rounded-xl cursor-pointer hover:border-brand-orange/40 hover:bg-brand-beige/40 transition-all group"
+                      onClick={() => handleScheduleClick(schedule)}
+                      className={`bg-brand-beige/20 border border-brand-orange/10 p-4 rounded-xl cursor-pointer hover:border-brand-orange/40 hover:bg-brand-beige/40 transition-all group relative`}
                     >
                       <div className="flex justify-between items-start">
                         <div>
@@ -321,7 +292,7 @@ const DeviceDetails = () => {
             </div>
           </div>
 
-          {/* 4. ACTIVITY LOGS CARD */}
+          {/* ACTIVITY LOGS */}
           <div className="bg-white rounded-2xl shadow-sm border border-brand-beige overflow-hidden flex flex-col h-[400px]">
             <div className="p-6 border-b border-brand-beige flex justify-between items-center">
               <h2 className="font-bold text-lg text-brand-dark flex items-center gap-2">
@@ -408,7 +379,7 @@ const DeviceDetails = () => {
                   ))}
                 </select>
                 {availableSchedules.length === 0 && (
-                  <p className="text-xs text-red-500 mt-2">No unassigned schedules available. Create one in Schedules page first.</p>
+                  <p className="text-xs text-red-500 mt-2">No unassigned schedules available.</p>
                 )}
               </div>
               
