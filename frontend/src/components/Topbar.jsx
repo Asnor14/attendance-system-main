@@ -42,7 +42,7 @@ const Topbar = ({ toggleSidebar = () => {} }) => {
               {new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
             </p>
             <h2 className="text-lg font-bold text-brand-dark">
-              Welcome, {user?.full_name?.split(' ')[0] || 'User'} 👋
+              Welcome, {user?.full_name?.split(' ')[0] || 'User'} !
             </h2>
           </div>
         </div>

@@ -113,7 +113,7 @@ const Settings = () => {
             </div>
             <div className="flex justify-between">
               <span>Database:</span>
-              <span className="font-medium">SQLite</span>
+              <span className="font-medium">Supabase (PostgreSQL)</span>
             </div>
           </div>
         </div>

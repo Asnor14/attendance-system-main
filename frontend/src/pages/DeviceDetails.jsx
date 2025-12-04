@@ -5,9 +5,9 @@ import { devicesAPI } from '../api/devices';
 import { schedulesAPI } from '../api/schedules';
 import { 
   MdArrowBack, MdSync, MdCheckCircle, MdCancel, MdCameraAlt, 
-  MdNfc, MdAdd, MdDelete, MdAccessTime, MdSchool,
-  MdVpnKey, MdContentCopy // <--- Added Icons
-} from 'react-icons/md';
+  MdAdd, MdDelete, MdAccessTime, MdSchool,
+  MdVpnKey, MdContentCopy 
+} from 'react-icons/md'; // Removed MdNfc
 import { useAuth } from '../context/AuthContext';
 
 const DeviceDetails = () => {
@@ -21,7 +21,8 @@ const DeviceDetails = () => {
   const [allSchedules, setAllSchedules] = useState([]);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [copied, setCopied] = useState(false); // <--- State for copy feedback
+  const [isSyncing, setIsSyncing] = useState(false); // State for sync animation
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -35,59 +36,77 @@ const DeviceDetails = () => {
       ]);
       setDevice(d);
       setKioskSchedules(s);
-    } catch (e) { console.error(e); } finally { setLoading(false); }
+    } catch (e) { 
+      console.error(e); 
+    } finally { 
+      setLoading(false); 
+    }
   };
 
-  const toggleFeature = async (feature) => {
-    const name = feature === 'camera' ? 'Face Recognition' : 'RFID Reader';
-    
-    const result = await Swal.fire({
-      title: `Toggle ${name}?`,
-      html: `<p>Make sure the <b>RPi is connected to the internet</b> to apply changes.</p>`,
-      icon: 'question',
-      showCancelButton: true,
-      confirmButtonColor: '#FC6E20',
-      cancelButtonColor: '#323232',
-      confirmButtonText: 'Yes, Toggle',
-      background: '#FFE7D0',
-      color: '#1B1B1B'
-    });
-    
-    if (!result.isConfirmed) return;
+  const toggleCamera = async () => {
+    // 1. Optimistic Update: Switch visual state immediately for animation
+    const originalState = device.camera_enabled;
+    const newState = !originalState;
 
-    const updates = {
-      camera_enabled: feature === 'camera' ? !device.camera_enabled : device.camera_enabled,
-      rfid_enabled: feature === 'rfid' ? !device.rfid_enabled : device.rfid_enabled
-    };
+    setDevice(prev => ({ ...prev, camera_enabled: newState }));
 
-    await devicesAPI.updateConfig(id, updates);
-    fetchData();
-    
-    Swal.fire({
-      title: 'Updated!',
-      text: 'Configuration saved to cloud.',
-      icon: 'success',
-      timer: 1500,
-      showConfirmButton: false,
-      background: '#FFE7D0',
-      color: '#1B1B1B'
-    });
+    try {
+      // 2. Send request to backend
+      await devicesAPI.updateConfig(id, { 
+        camera_enabled: newState,
+        rfid_enabled: device.rfid_enabled // Keep existing rfid value
+      });
+      
+      // Optional: Show small toast instead of blocking alert
+      const Toast = Swal.mixin({
+        toast: true,
+        position: 'top-end',
+        showConfirmButton: false,
+        timer: 1500,
+        background: '#FFE7D0',
+        color: '#1B1B1B'
+      });
+      Toast.fire({
+        icon: 'success',
+        title: newState ? 'Camera Enabled' : 'Camera Disabled'
+      });
+
+    } catch (error) {
+      // 3. Revert if error
+      setDevice(prev => ({ ...prev, camera_enabled: originalState }));
+      Swal.fire({
+        icon: 'error',
+        title: 'Update Failed',
+        text: 'Could not update device configuration.',
+        background: '#FFE7D0',
+        color: '#1B1B1B',
+        confirmButtonColor: '#FC6E20'
+      });
+    }
   };
 
   const handleForceSync = async () => {
-    await fetchData();
-    Swal.fire({
-      icon: 'success',
-      title: 'Synced',
-      text: 'Device status refreshed.',
-      timer: 1000,
-      showConfirmButton: false,
-      background: '#FFE7D0',
-      color: '#1B1B1B'
-    });
+    setIsSyncing(true); // Start spinning icon
+    await fetchData(); // Re-fetch data from DB
+    
+    // Simulate a small delay if fetch is too fast, just so user sees the feedback
+    setTimeout(() => {
+        setIsSyncing(false); // Stop spinning
+        const Toast = Swal.mixin({
+            toast: true,
+            position: 'top-end',
+            showConfirmButton: false,
+            timer: 2000,
+            background: '#FFE7D0',
+            color: '#1B1B1B'
+        });
+        Toast.fire({
+            icon: 'success',
+            title: 'Device Status Synced'
+        });
+    }, 500);
   };
 
-  // <--- New Function to Copy Key
   const handleCopyKey = () => {
     if (device?.connection_key) {
       navigator.clipboard.writeText(device.connection_key);
@@ -158,7 +177,7 @@ const DeviceDetails = () => {
               <div className="flex flex-wrap items-center gap-3 mt-2 text-brand-beige/60">
                  <span className="bg-white/10 px-3 py-1 rounded-lg text-sm font-medium">{device.room || 'Unassigned'}</span>
                  
-                 {/* Connection Key Badge (Updated) */}
+                 {/* Connection Key Badge */}
                  {device.connection_key && (
                     <button 
                       onClick={handleCopyKey}
@@ -180,48 +199,45 @@ const DeviceDetails = () => {
                {device.status === 'online' ? <MdCheckCircle size={20} /> : <MdCancel size={20} />}
                {device.status.toUpperCase()}
             </div>
-            <button onClick={handleForceSync} className="p-3 bg-brand-beige/10 hover:bg-brand-beige/20 rounded-xl text-brand-beige transition-colors"><MdSync size={24}/></button>
+            
+            {/* Updated Sync Button */}
+            <button 
+                onClick={handleForceSync} 
+                className="p-3 bg-brand-beige/10 hover:bg-brand-beige/20 rounded-xl text-brand-beige transition-colors"
+                title="Sync Status"
+            >
+                <MdSync size={24} className={isSyncing ? "animate-spin" : ""} />
+            </button>
         </div>
         
         {/* Decorative blob */}
         <div className="absolute top-0 right-0 w-64 h-64 bg-brand-orange/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 pointer-events-none"></div>
       </div>
 
-      {/* MIDDLE: Feature Toggles */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Camera Toggle */}
+      {/* MIDDLE: Feature Toggles (RFID REMOVED) */}
+      <div className="grid grid-cols-1"> {/* Changed to single column since we only have one card now */}
+        
+        {/* Camera Toggle - Updated Logic */}
         <div 
-          onClick={() => toggleFeature('camera')} 
-          className={`p-6 rounded-2xl cursor-pointer border-2 transition-all shadow-sm group relative overflow-hidden ${device.camera_enabled ? 'bg-white border-green-400' : 'bg-gray-100 border-gray-300'}`}
+          onClick={toggleCamera} 
+          className={`p-6 rounded-2xl cursor-pointer border-2 transition-all duration-300 shadow-sm group relative overflow-hidden ${device.camera_enabled ? 'bg-white border-green-400' : 'bg-gray-100 border-gray-300'}`}
         >
            <div className="flex justify-between items-center mb-4 relative z-10">
-             <div className={`p-3 rounded-full ${device.camera_enabled ? 'bg-green-100 text-green-600' : 'bg-gray-200 text-gray-400'}`}>
+             <div className={`p-3 rounded-full transition-colors ${device.camera_enabled ? 'bg-green-100 text-green-600' : 'bg-gray-200 text-gray-400'}`}>
                 <MdCameraAlt size={32} />
              </div>
-             <div className={`w-12 h-7 rounded-full p-1 transition-colors ${device.camera_enabled ? 'bg-green-500' : 'bg-gray-300'}`}>
-                <div className={`w-5 h-5 bg-white rounded-full shadow-md transform transition-transform duration-300 ${device.camera_enabled ? 'translate-x-5' : ''}`}></div>
+             
+             {/* The Switch UI */}
+             <div className={`w-14 h-8 rounded-full p-1 transition-colors duration-300 ${device.camera_enabled ? 'bg-green-500' : 'bg-gray-300'}`}>
+                <div className={`w-6 h-6 bg-white rounded-full shadow-md transform transition-transform duration-300 ${device.camera_enabled ? 'translate-x-6' : 'translate-x-0'}`}></div>
              </div>
            </div>
            <h3 className="text-xl font-bold text-brand-dark relative z-10">Face Recognition</h3>
-           <p className="text-xs text-gray-500 mt-1 relative z-10">{device.camera_enabled ? 'System is actively scanning faces' : 'Camera is disabled via software'}</p>
+           <p className="text-xs text-gray-500 mt-1 relative z-10">
+             {device.camera_enabled ? 'Enabled' : 'Disabled'}
+           </p>
         </div>
 
-        {/* RFID Toggle */}
-        <div 
-          onClick={() => toggleFeature('rfid')} 
-          className={`p-6 rounded-2xl cursor-pointer border-2 transition-all shadow-sm group relative overflow-hidden ${device.rfid_enabled ? 'bg-white border-green-400' : 'bg-gray-100 border-gray-300'}`}
-        >
-           <div className="flex justify-between items-center mb-4 relative z-10">
-             <div className={`p-3 rounded-full ${device.rfid_enabled ? 'bg-green-100 text-green-600' : 'bg-gray-200 text-gray-400'}`}>
-                <MdNfc size={32} />
-             </div>
-             <div className={`w-12 h-7 rounded-full p-1 transition-colors ${device.rfid_enabled ? 'bg-green-500' : 'bg-gray-300'}`}>
-                <div className={`w-5 h-5 bg-white rounded-full shadow-md transform transition-transform duration-300 ${device.rfid_enabled ? 'translate-x-5' : ''}`}></div>
-             </div>
-           </div>
-           <h3 className="text-xl font-bold text-brand-dark relative z-10">RFID Reader</h3>
-           <p className="text-xs text-gray-500 mt-1 relative z-10">{device.rfid_enabled ? 'Card scanning is active' : 'Reader input ignored'}</p>
-        </div>
       </div>
 
       {/* BOTTOM: Assigned Schedules */}
