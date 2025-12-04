@@ -6,7 +6,8 @@ import { devicesAPI } from '../api/devices';
 import { useAuth } from '../context/AuthContext';
 import { 
   MdAdd, MdDeviceHub, MdWifi, MdRefresh, MdDelete, 
-  MdPersonAdd, MdSignalWifi4Bar, MdSignalWifiOff, MdMeetingRoom, MdVpnKey 
+  MdPersonAdd, MdSignalWifi4Bar, MdSignalWifiOff, MdMeetingRoom, MdVpnKey,
+  MdCameraAlt, MdNfc
 } from 'react-icons/md';
 
 const Devices = () => {
@@ -22,7 +23,7 @@ const Devices = () => {
     device_name: '',
     room: 'ER101',
     device_type: 'kiosk',
-    connection_key: '', // New field for manual ID/Key
+    connection_key: '',
     status: 'offline',
   });
   
@@ -46,7 +47,6 @@ const Devices = () => {
     }
   };
 
-  // Generate a random key for the kiosk to use
   const generateKey = () => {
     const key = 'kiosk_' + Math.random().toString(36).substr(2, 9);
     setFormData(prev => ({ ...prev, connection_key: key }));
@@ -57,6 +57,36 @@ const Devices = () => {
     setRefreshingId(id);
     await fetchDevices();
     setTimeout(() => setRefreshingId(null), 500);
+  };
+
+  // NEW: Function to Toggle Camera/RFID Config
+  const handleToggleConfig = async (e, device, field) => {
+    e.stopPropagation();
+    
+    // 1. Calculate new value
+    const newValue = !device[field];
+
+    // 2. Optimistic UI Update (Update screen immediately)
+    const updatedDevices = devices.map(d => 
+        d.id === device.id ? { ...d, [field]: newValue } : d
+    );
+    setDevices(updatedDevices);
+
+    try {
+      // 3. Send to API (This saves to Supabase even if offline)
+      await devicesAPI.update(device.id, { [field]: newValue });
+      
+      const Toast = Swal.mixin({
+        toast: true, position: 'top-end', showConfirmButton: false, timer: 1500, timerProgressBar: true
+      });
+      Toast.fire({ icon: 'success', title: `${field === 'camera_enabled' ? 'Camera' : 'RFID'} ${newValue ? 'Enabled' : 'Disabled'}` });
+
+    } catch (error) {
+      console.error("Update failed", error);
+      // Revert UI if failed
+      fetchDevices();
+      Swal.fire('Error', 'Failed to update setting', 'error');
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -75,14 +105,7 @@ const Devices = () => {
         confirmButtonColor: '#FC6E20'
       });
     } catch (error) {
-      Swal.fire({
-        icon: 'error',
-        title: 'Error',
-        text: 'Failed to add device',
-        background: '#FFE7D0',
-        color: '#1B1B1B',
-        confirmButtonColor: '#FC6E20'
-      });
+      Swal.fire({ icon: 'error', title: 'Error', text: 'Failed to add device' });
     }
   };
 
@@ -95,35 +118,16 @@ const Devices = () => {
       showCancelButton: true,
       confirmButtonColor: '#FC6E20',
       cancelButtonColor: '#323232',
-      confirmButtonText: 'Yes, Delete',
-      background: '#FFE7D0',
-      color: '#1B1B1B'
+      confirmButtonText: 'Yes, Delete'
     });
 
     if(result.isConfirmed) {
       try {
-        // Attempt to delete
         await devicesAPI.delete(id);
-        
-        // If successful:
         fetchDevices();
-        Swal.fire({
-          icon: 'success',
-          title: 'Deleted',
-          background: '#FFE7D0',
-          confirmButtonColor: '#FC6E20'
-        });
+        Swal.fire('Deleted', 'Device removed', 'success');
       } catch (error) {
-        // Handle error (e.g., Foreign Key Constraint)
-        console.error("Delete failed:", error);
-        Swal.fire({
-          icon: 'error',
-          title: 'Cannot Delete Device',
-          text: 'This device is still in use or has subjects assigned to it. To remove this device, please remove the assigned subjects first.',
-          background: '#FFE7D0',
-          color: '#1B1B1B',
-          confirmButtonColor: '#FC6E20'
-        });
+        Swal.fire('Error', 'Cannot delete active device', 'error');
       }
     }
   };
@@ -147,7 +151,6 @@ const Devices = () => {
           <p className="text-brand-charcoal/70 mt-1">Manage Kiosks and Scanners</p>
         </div>
         
-        {/* Only Admin can Add */}
         {isAdmin && (
           <button
             onClick={() => { resetForm(); setShowModal(true); }}
@@ -161,13 +164,7 @@ const Devices = () => {
 
       {devices.length === 0 ? (
         <div className="col-span-full py-16 text-center bg-white rounded-2xl border-2 border-dashed border-brand-orange/30">
-          <div className="w-16 h-16 bg-brand-beige rounded-full flex items-center justify-center mx-auto mb-4">
-            <MdDeviceHub className="text-3xl text-brand-orange" />
-          </div>
-          <h3 className="text-lg font-semibold text-brand-dark">No devices found</h3>
-          <p className="text-brand-charcoal/70 mt-1">
-            {isAdmin ? "Add a new device to get started" : "Contact an admin to add devices"}
-          </p>
+           <h3 className="text-lg font-semibold text-brand-dark">No devices found</h3>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
@@ -178,12 +175,8 @@ const Devices = () => {
                 key={device.id}
                 whileHover={{ y: -4, scale: 1.02 }}
                 onClick={() => navigate(`/devices/${device.id}`)}
-                className={`
-                  group relative bg-white rounded-2xl p-6 border-2 transition-all cursor-pointer shadow-sm
-                  ${isOnline ? 'border-green-400 shadow-green-100' : 'border-transparent hover:border-brand-orange/30'}
-                `}
+                className={`group relative bg-white rounded-2xl p-6 border-2 transition-all cursor-pointer shadow-sm ${isOnline ? 'border-green-400 shadow-green-100' : 'border-transparent hover:border-brand-orange/30'}`}
               >
-                {/* Header: Icon + Status */}
                 <div className="flex justify-between items-start mb-4">
                   <div className={`p-3 rounded-xl ${isOnline ? 'bg-green-100 text-green-600' : 'bg-brand-beige text-brand-charcoal'}`}>
                     {device.device_type === 'kiosk' ? <MdDeviceHub size={28} /> : <MdWifi size={28} />}
@@ -194,7 +187,6 @@ const Devices = () => {
                   </span>
                 </div>
 
-                {/* Body: Name + Room */}
                 <h3 className="text-lg font-bold text-brand-dark group-hover:text-brand-orange transition-colors">
                   {device.device_name}
                 </h3>
@@ -203,46 +195,49 @@ const Devices = () => {
                    <span>{device.room || 'Unassigned Room'}</span>
                 </div>
 
-                {/* Stats */}
-                <div className="space-y-2 mt-4 mb-6 pt-4 border-t border-brand-beige">
-                  <div className="flex items-center text-xs text-brand-charcoal/60 gap-2">
-                    {isOnline ? <MdSignalWifi4Bar className="text-green-500" /> : <MdSignalWifiOff className="text-red-400" />}
-                    <span>{isOnline ? 'Strong Signal' : 'No Connection'}</span>
+                {/* --- NEW: CONFIG TOGGLES (Update DB even if Offline) --- */}
+                {isAdmin && (
+                  <div className="flex gap-2 mt-4 mb-2">
+                    {/* Camera Toggle */}
+                    <button
+                      onClick={(e) => handleToggleConfig(e, device, 'camera_enabled')}
+                      className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-bold border transition-all
+                        ${device.camera_enabled 
+                          ? 'bg-blue-50 border-blue-200 text-blue-600' 
+                          : 'bg-gray-50 border-gray-200 text-gray-400'}`}
+                    >
+                      <MdCameraAlt size={16} /> {device.camera_enabled ? 'CAM ON' : 'CAM OFF'}
+                    </button>
+                    
+                    {/* RFID Toggle */}
+                    <button
+                      onClick={(e) => handleToggleConfig(e, device, 'rfid_enabled')}
+                      className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-bold border transition-all
+                        ${device.rfid_enabled 
+                          ? 'bg-purple-50 border-purple-200 text-purple-600' 
+                          : 'bg-gray-50 border-gray-200 text-gray-400'}`}
+                    >
+                      <MdNfc size={16} /> {device.rfid_enabled ? 'RFID ON' : 'RFID OFF'}
+                    </button>
                   </div>
-                  <p className="text-xs text-brand-charcoal/50 font-mono">
-                    Last Sync: {device.last_sync ? new Date(device.last_sync).toLocaleTimeString() : 'Never'}
-                  </p>
-                </div>
+                )}
 
-                {/* Footer Actions */}
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between mt-4 pt-4 border-t border-brand-beige">
                    <div className="flex gap-2">
                       <button 
                         onClick={(e) => handleRefresh(e, device.id)}
-                        className={`p-2 rounded-lg hover:bg-brand-beige text-brand-charcoal transition-colors ${refreshingId === device.id ? 'animate-spin text-brand-orange' : ''}`}
-                        title="Sync Status"
+                        className={`p-2 rounded-lg hover:bg-brand-beige ${refreshingId === device.id ? 'animate-spin text-brand-orange' : ''}`}
                       >
                         <MdRefresh size={20} />
                       </button>
-                      
-                      {/* Admin Only Delete */}
                       {isAdmin && (
-                        <button 
-                            onClick={(e) => handleDelete(e, device.id)}
-                            className="p-2 rounded-lg hover:bg-brand-beige text-brand-charcoal hover:text-red-600 transition-colors"
-                            title="Delete"
-                          >
+                        <button onClick={(e) => handleDelete(e, device.id)} className="p-2 rounded-lg hover:bg-brand-beige hover:text-red-600">
                             <MdDelete size={20} />
-                          </button>
+                        </button>
                       )}
                    </div>
-
-                   {/* Register Action (Online Only) */}
                    {isOnline && (
-                      <button
-                        onClick={(e) => handleRegisterClick(e, device.id)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-brand-orange/10 text-brand-orange rounded-lg text-xs font-bold hover:bg-brand-orange/20 transition-colors"
-                      >
+                      <button onClick={(e) => handleRegisterClick(e, device.id)} className="flex items-center gap-1.5 px-3 py-1.5 bg-brand-orange/10 text-brand-orange rounded-lg text-xs font-bold hover:bg-brand-orange/20">
                         <MdPersonAdd size={16} /> Register
                       </button>
                    )}
@@ -252,8 +247,7 @@ const Devices = () => {
           })}
         </div>
       )}
-
-      {/* Modal */}
+      {/* Modal Code remains the same... */}
       {showModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl animate-in fade-in zoom-in duration-200">
