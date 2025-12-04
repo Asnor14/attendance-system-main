@@ -5,12 +5,12 @@ import {
   updateTeacher, 
   deleteTeacher 
 } from '../controllers/teachersController.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { verifyToken } from '../middleware/auth.js';
 
 const router = express.Router();
 
 // Protect all routes (Only Admins can manage teachers)
-router.use(authenticateToken);
+router.use(verifyToken);
 
 router.get('/', getAllTeachers);
 router.post('/', createTeacher);

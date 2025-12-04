@@ -6,7 +6,7 @@ import {
   approvePending,
   rejectPending
 } from '../controllers/pendingController.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { verifyToken } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -16,7 +16,7 @@ const router = express.Router();
 // If you want an external site to post here, you might need to move createPending outside authenticateToken
 router.post('/', createPending); 
 
-router.use(authenticateToken); // Protect everything below
+router.use(verifyToken); // Protect everything below
 router.get('/', getAllPending);
 router.get('/:id', getPendingById);
 router.post('/:id/approve', approvePending);

@@ -10,15 +10,13 @@ export const getAllDevices = async (req, res, next) => {
 
     if (error) throw error;
 
-    // Calculate status based on last_sync time (redundant if Kiosk updates status column, but good backup)
+    // Dynamic Status Check
     const now = new Date();
     const updated = data.map(d => {
-      // If the DB says online, trust it. Otherwise check timestamp.
-      let status = d.status; 
+      let status = d.status;
       if (d.last_sync) {
         const diff = (now - new Date(d.last_sync)) / 1000;
-        // If older than 60 seconds, force offline
-        if (diff > 60) status = 'offline'; 
+        if (diff > 60) status = 'offline'; // Consider offline if no heartbeat for 60s
       }
       return { ...d, status };
     });
@@ -42,7 +40,7 @@ export const createDevice = async (req, res, next) => {
         connection_key: finalKey,
         status: 'offline',
         camera_enabled: true,
-        rfid_enabled: true 
+        rfid_enabled: true
       }])
       .select()
       .single();
@@ -52,14 +50,13 @@ export const createDevice = async (req, res, next) => {
   } catch (error) { next(error); }
 };
 
-// 3. Update Config (FIXED FOR PARTIAL UPDATES)
+// 3. Update Config (FIXED for Partial Updates)
 export const updateDeviceConfig = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const updates = req.body; // Get all fields sent
+    const updates = req.body; 
 
-    // Clean the updates object to remove undefined/null values if necessary
-    // This allows sending { camera_enabled: true } without breaking rfid_enabled
+    // Remove undefined/null fields so we don't overwrite existing data with blank
     Object.keys(updates).forEach(key => updates[key] === undefined && delete updates[key]);
 
     const { data, error } = await supabase
@@ -77,9 +74,22 @@ export const updateDeviceConfig = async (req, res, next) => {
 // 4. Get Device By ID
 export const getDeviceById = async (req, res, next) => {
   try {
-    const { data: device, error } = await supabase.from('devices').select('*').eq('id', req.params.id).single();
+    const { data: device, error } = await supabase
+      .from('devices')
+      .select('*')
+      .eq('id', req.params.id)
+      .single();
+
     if (error) return res.status(404).json({ error: 'Device not found' });
-    res.json(device);
+
+    // Add dynamic status calculation here if needed for single view
+    const now = new Date();
+    let status = 'offline';
+    if (device.last_sync && (now - new Date(device.last_sync)) / 1000 < 60) {
+      status = 'online';
+    }
+
+    res.json({ ...device, status });
   } catch (error) { next(error); }
 };
 
@@ -87,42 +97,41 @@ export const getDeviceById = async (req, res, next) => {
 export const deleteDevice = async (req, res, next) => {
   try {
     const deviceId = req.params.id;
-    // Unlink schedules first
+    
+    // Unlink schedules
     await supabase.from('schedules').update({ kiosk_id: null }).eq('kiosk_id', deviceId);
-    // Delete logs
+    
+    // Delete logs (Optional: Remove this if you want to keep logs)
     await supabase.from('attendance_logs').delete().eq('kiosk_id', deviceId);
+    
     // Delete device
     const { error } = await supabase.from('devices').delete().eq('id', deviceId);
-
     if (error) throw error;
+    
     res.json({ success: true });
   } catch (error) { next(error); }
 };
 
-// 6. Heartbeat / Logs / Register (Keep existing)
+// 6. Heartbeat
 export const deviceHeartbeat = async (req, res, next) => {
   try {
     const now = new Date().toISOString();
-    await supabase.from('devices').update({ last_sync: now, status: 'online' }).eq('id', req.params.id);
+    await supabase
+      .from('devices')
+      .update({ last_sync: now, status: 'online' })
+      .eq('id', req.params.id);
     res.json({ success: true });
   } catch (error) { next(error); }
 };
 
+// 7. Get Logs
 export const getDeviceLogs = async (req, res, next) => {
   try {
-    const { data } = await supabase.from('attendance_logs').select('*').eq('kiosk_id', req.params.id).order('id', { ascending: false }).limit(1000);
+    const { data } = await supabase.from('attendance_logs')
+      .select('*')
+      .eq('kiosk_id', req.params.id)
+      .order('id', { ascending: false })
+      .limit(1000);
     res.json(data);
   } catch (error) { next(error); }
-};
-
-export const registerDevice = async (req, res, next) => {
-  try {
-    const { device_name } = req.body;
-    const { data: existing } = await supabase.from('devices').select('*').eq('device_name', device_name).single();
-    if (existing) {
-      await supabase.from('devices').update({ status: 'online', last_sync: new Date().toISOString() }).eq('id', existing.id);
-      return res.json({ id: existing.id });
-    }
-    res.status(404).json({error: "Device not found"});
-  } catch (e) { next(e); }
 };

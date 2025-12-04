@@ -7,7 +7,7 @@ import {
   deleteStudent,
   syncStudents 
 } from '../controllers/studentsController.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { verifyToken } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -15,7 +15,7 @@ const router = express.Router();
 router.get('/sync', syncStudents); 
 
 // Protected Routes (For Web App - Token Required)
-router.use(authenticateToken); 
+router.use(verifyToken); 
 
 router.get('/', getAllStudents);
 router.get('/:id', getStudentById);

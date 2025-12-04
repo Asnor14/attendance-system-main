@@ -4,13 +4,13 @@ import {
   syncSchedules, getSchedulesByKiosk, assignScheduleToKiosk,
   getScheduleLogs 
 } from '../controllers/schedulesController.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { verifyToken } from '../middleware/auth.js';
 
 const router = express.Router();
 
 router.get('/sync', syncSchedules); 
 
-router.use(authenticateToken);
+router.use(verifyToken);
 router.get('/', getAllSchedules);
 router.get('/:id/logs', getScheduleLogs); // New Logs Route
 router.get('/kiosk/:kioskId', getSchedulesByKiosk);

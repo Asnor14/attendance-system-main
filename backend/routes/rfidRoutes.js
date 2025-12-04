@@ -4,7 +4,7 @@ import {
   updateRfidUid,
   clearRfidUid
 } from '../controllers/rfidController.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { verifyToken } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -12,7 +12,7 @@ const router = express.Router();
 router.post('/update', updateRfidUid);
 
 // Protected endpoints for admin
-router.use(authenticateToken);
+router.use(verifyToken);
 router.get('/live', getLiveRfidUid);
 router.post('/clear', clearRfidUid);
 
